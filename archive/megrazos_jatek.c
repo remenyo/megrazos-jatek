@@ -1,10 +1,9 @@
 /*
  * megrazos_jatek.c
  *
- * Created: 2017.04.11. 19:58:48
- *  Author: SEM
+ * Created: 2024.03.19. 00:00:24
+ *  Author: gpt4-0125-preview
  */ 
-
 
 #include <avr/io.h>
 #include "lcd.h"
@@ -15,175 +14,131 @@
 #define endpin()  !(PINB&(1<<PB2))
 #define softpwmvalmax 1000
 
-volatile uint16_t softpwmval;
+volatile uint16_t softpwmval = 0;
+volatile uint16_t best_time = 254; // Initially high to ensure any time beats it
+volatile uint8_t current_time = 0;
+volatile unsigned char time_changed = 0;
 
-volatile uint8_t current_time;
+enum State { START, PLAYING, FINISH } state = START;
+uint8_t entering_state = 1;
 
-volatile uint16_t best_time = 254;
-
-inline void set_best_time(uint8_t);
-inline void set_current_time();
-void lcd_putint(uint8_t);
-
-volatile unsigned char time_changed;
-
-enum statevar {
-	start,
-	playing,
-	finish} state;
-
-uint8_t enteringstate;
-
-void set_best_time(uint8_t s){
-	lcd_gotoxy(11,0);
-	lcd_putint(s);
+void initHardware() {
+    DDRD |= (1<<PD4);
+    PORTD &=~ (1<<PD4);
+    
+    DDRB |= (1<<PB3);
+    TCCR2 |= (1<<CS21);
+    TIMSK |= (1<<TOIE2);
+    
+    OCR1A = 46875;
+    TCCR1A = 1 << WGM12;
+    TIMSK |= 1 << OCIE1A;
+    TCCR1B = 1 << CS12;    
 }
 
-void set_current_time(){
-	lcd_gotoxy(11,1);
-	lcd_putint(current_time);
+void lcd_put_uint8_t(uint8_t value) {
+    char buffer[4]; // Includes space for 3 digits and null terminator
+    sprintf(buffer, "%3u", value); // Formats the value into 3 spaces
+    lcd_puts(buffer);
 }
 
-void lcd_putint(uint8_t q){
-	uint8_t tmp;
-	
-	tmp = q/100;
-	if(tmp){
-		lcd_putc('0'+tmp);
-		tmp = (q%100)/10;
-		lcd_putc('0'+tmp);
-	}
-	else{
-		lcd_putc(' ');	
-		tmp = (q%100)/10;
-		if(tmp)
-			lcd_putc('0'+tmp);
-		else
-			lcd_putc(' ');
-	}
-
-	tmp = q%10;
-	lcd_putc('0'+tmp);
+void displayStateStart() {
+    lcd_clrscr();
+    lcd_puts("Ready to play!");
+    lcd_gotoxy(0,1);
+    lcd_puts("Best time:    s");
+    lcd_gotoxy(11,1);
+    lcd_put_uint8_t(best_time);
 }
 
-void gotostate(uint8_t newstate)
-{
-	if (state != newstate){ 
-		state = newstate;
-		enteringstate = 1;
-	}
-} 
+void displayStatePlaying() {
+    lcd_clrscr();
+    lcd_puts("Best time:    s");
+    lcd_gotoxy(11,0);
+    lcd_put_uint8_t(best_time);
+    lcd_gotoxy(0,1);  
+    lcd_puts("Current:      s");
+    softpwmval = 20; // Start the PWM value
+    current_time = 0; // Reset current time
+}
 
-int main(void)
-{
-	
-	DDRD |= (1<<PD4);
-	PORTD &=~ (1<<PD4);
-	
-	DDRB |= (1<<PB3); // tekercs tranzisztor PWM laba
-	TCCR2 |= (1<<CS21);
-	//TCCR2 |= (1<<WGM20) | (1<<WGM21) | (1<<COM21);
-	TIMSK |= (1<<TOIE2);
-	
-	softpwmval=0;
-	
-	//OCR2 = 50;
-	
-	///////////////////////////INIT VARS
-	current_time = 0;
-	time_changed = 0;
-	enteringstate = 1;
-	
-	///////////////////////////LCD INIT
-	
-	lcd_init(LCD_DISP_ON);
-	
-	////////////////////////TIMER INIT
-	OCR1A=46875;
-	TCCR1A = 1 << WGM12;
-	TIMSK |= 1 << OCIE1A;
-	TCCR1B = 1 << CS12;	
-	
-	sei();
-	
-    while(1)
-    {
-		//main Q&D SM
-		
-		switch (state){
-			
-			case start:
-				if (enteringstate){
-					softpwmval=0;
-					lcd_clrscr();
-					lcd_gotoxy(0,0);
-					lcd_puts("Ready to play!");
-					lcd_gotoxy(0,1);
-					lcd_puts("Best time:    s");
-					lcd_gotoxy(11,1);
-					lcd_putint(best_time);
-					enteringstate = 0;
-				}
-				if (!startpin()) gotostate(playing);
-			break;
-			
-			case playing:
-				if (enteringstate){
-					lcd_clrscr();
-					lcd_puts("Best time:    s");
-					lcd_gotoxy(11,0);
-					lcd_putint(best_time);
-					lcd_gotoxy(0,1);  
-					lcd_puts("Current:      s");
-					softpwmval=20;
-					current_time=0;
-					enteringstate = 0;
-				}
-						if (time_changed){
-							softpwmval += 5;
-							if (softpwmval >= softpwmvalmax) softpwmval = softpwmvalmax;
-							time_changed = 0;
-							cli();
-							lcd_gotoxy(11,1);
-							lcd_putint(current_time);
-							sei();
-							if (startpin()) gotostate(start);
-							if (endpin()) gotostate(finish);
-						}
-			break;
-			
-			case finish:
-			if (enteringstate){
-					softpwmval=0;
-					if (current_time < best_time) best_time = current_time;
-					lcd_clrscr();
-					lcd_gotoxy(0,0);
-					lcd_puts("Grat!       s");
-					lcd_gotoxy(11,0);
-					lcd_putint(current_time);
-					lcd_gotoxy(0,1);
-					lcd_puts("Best time:    s");
-					lcd_gotoxy(11,1);
-					lcd_putint(best_time);
-					enteringstate = 0;
-				}
-			if (startpin()) gotostate(start);
-			break;
-		}
-				
+void displayStateFinish() {
+    lcd_clrscr();
+    lcd_puts("Grat!       s");
+    lcd_gotoxy(11,0);
+    lcd_put_uint8_t(current_time);
+    lcd_gotoxy(0,1);
+    lcd_puts("Best time:    s");
+    lcd_gotoxy(11,1);
+    lcd_put_uint8_t(best_time);
+}
+
+void transitionState(enum State new_state) {
+    state = new_state;
+    entering_state = 1;
+}
+
+void handleState() {
+    switch(state) {
+        case START:
+            if (entering_state) {
+                softpwmval = 0;
+                displayStateStart();
+                entering_state = 0;
+            }
+            if (!startpin()) transitionState(PLAYING);
+            break;
+        
+        case PLAYING:
+            if (entering_state) {
+                displayStatePlaying();
+                entering_state = 0;
+            }
+            if (time_changed) {
+                softpwmval += 5;
+                if (softpwmval >= softpwmvalmax) softpwmval = softpwmvalmax;
+                time_changed = 0;
+                cli(); // Temporarily disable interrupts
+                lcd_gotoxy(11,1);
+                lcd_put_uint8_t(current_time);
+                sei(); // Enable interrupts again
+                if (startpin()) transitionState(START);
+                if (endpin()) transitionState(FINISH);
+            }
+            break;
+        
+        case FINISH:
+            if (entering_state) {
+                softpwmval = 0;
+                if (current_time < best_time) 
+                    best_time = current_time;
+                displayStateFinish();
+                entering_state = 0;
+            }
+            if (startpin()) transitionState(START);
+            break;
     }
 }
 
-volatile uint16_t softpwmcntr;
-ISR (TIMER2_OVF_vect){	// gyors INTerrupt
-	softpwmcntr++;
-	if (softpwmcntr > softpwmval) 
-		PORTB &=~ (1<<PB3);
-	else PORTB |= (1<<PB3);
-	if (softpwmcntr > 1024) softpwmcntr=0; // 10bit soft pwm 
+int main(void) {
+    initHardware();
+    lcd_init(LCD_DISP_ON);
+    sei(); // Enable global interrupts
+    
+    while (1) {
+        handleState();
+    }
 }
 
-ISR(TIMER1_COMPA_vect){
-	current_time++;
-	time_changed=1;
+ISR (TIMER2_OVF_vect) {
+    static uint16_t softpwmcntr = 0;
+    softpwmcntr++;
+    if (softpwmcntr > softpwmval) PORTB &=~ (1<<PB3);
+    else PORTB |= (1<<PB3);
+    if (softpwmcntr > 1024) softpwmcntr = 0;
+}
+
+ISR(TIMER1_COMPA_vect) {
+    current_time++;
+    time_changed = 1;
 }
