@@ -3,6 +3,8 @@
  *
  * Created: 2024.03.19. 00:00:24
  *  Author: gpt4-0125-preview
+ *  Prompt: Rewrite the following code to a much cleaner version
+ *  Temp: 1, Max length: 4096
  */ 
 
 #include <avr/io.h>
